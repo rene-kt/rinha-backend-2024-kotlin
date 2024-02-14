@@ -1,47 +1,68 @@
+import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
+import org.gradle.api.tasks.testing.logging.TestLogEvent.*
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
-	id("org.springframework.boot") version "3.2.2"
-	id("io.spring.dependency-management") version "1.1.4"
-	kotlin("jvm") version "1.9.22"
-	kotlin("plugin.spring") version "1.9.22"
+  kotlin ("jvm") version "1.7.21"
+  application
+  id("com.github.johnrengelman.shadow") version "7.1.2"
 }
 
-group = "com.rene.rinhadebackend"
-version = "0.0.1-SNAPSHOT"
-
-java {
-	sourceCompatibility = JavaVersion.VERSION_17
-}
+group = "com.example"
+version = "1.0.0-SNAPSHOT"
 
 repositories {
-	mavenCentral()
+  mavenCentral()
+}
+
+val vertxVersion = "4.5.3"
+val junitJupiterVersion = "5.9.1"
+
+val mainVerticleName = "com.example.starter.MainVerticle"
+val launcherClassName = "io.vertx.core.Launcher"
+
+val watchForChange = "src/**/*"
+val doOnChange = "${projectDir}/gradlew classes"
+
+application {
+  mainClass.set(launcherClassName)
 }
 
 dependencies {
-	implementation("org.springframework.boot:spring-boot-starter-webflux")
-	implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
-	implementation("io.projectreactor.kotlin:reactor-kotlin-extensions")
-	implementation("org.jetbrains.kotlin:kotlin-reflect")
-	implementation ("jakarta.persistence:jakarta.persistence-api:3.1.0")
-	implementation("org.springframework.data:spring-data-jpa:3.2.2")
-	implementation("org.jetbrains.kotlinx:kotlinx-coroutines-reactor")
-	implementation("org.springframework.boot:spring-boot-starter-data-r2dbc:3.2.2")
-	implementation("org.postgresql:postgresql:42.7.1")
-	implementation("org.postgresql:r2dbc-postgresql:1.0.4.RELEASE")
-	developmentOnly("org.springframework.boot:spring-boot-devtools")
-	runtimeOnly("io.r2dbc:r2dbc-pool")
-	testImplementation("org.springframework.boot:spring-boot-starter-test")
-	testImplementation("io.projectreactor:reactor-test")
+  implementation(platform("io.vertx:vertx-stack-depchain:$vertxVersion"))
+  implementation("io.vertx:vertx-web")
+  implementation("io.vertx:vertx-pg-client")
+  implementation("io.vertx:vertx-lang-kotlin")
+  implementation ("com.fasterxml.jackson.core:jackson-databind:2.13.0")
+  implementation(kotlin("stdlib-jdk8"))
+  implementation("io.vertx:vertx-jdbc-client:4.5.3")
+  implementation("com.ongres.scram:client:2.1")
+  testImplementation("io.vertx:vertx-junit5")
+  testImplementation("org.junit.jupiter:junit-jupiter:$junitJupiterVersion")
 }
 
-tasks.withType<KotlinCompile> {
-	kotlinOptions {
-		freeCompilerArgs += "-Xjsr305=strict"
-		jvmTarget = "17"
-	}
+val compileKotlin: KotlinCompile by tasks
+compileKotlin.kotlinOptions.jvmTarget = "17"
+
+tasks.withType<ShadowJar> {
+  archiveClassifier.set("fat")
+  manifest {
+    attributes(
+      mapOf(
+        "Main-Class" to "com.example.starter.MainVerticle"
+      )
+    )
+  }
+  mergeServiceFiles()
 }
 
 tasks.withType<Test> {
-	useJUnitPlatform()
+  useJUnitPlatform()
+  testLogging {
+    events = setOf(PASSED, SKIPPED, FAILED)
+  }
+}
+
+tasks.withType<JavaExec> {
+  args = listOf("run", mainVerticleName, "--redeploy=$watchForChange", "--launcher-class=$launcherClassName", "--on-redeploy=$doOnChange")
 }

@@ -1,4 +1,4 @@
 FROM openjdk:17-jdk-slim
 EXPOSE 8080
-ADD /build/libs/rinhadebackend-0.0.1-SNAPSHOT.jar rinha.jar
-ENTRYPOINT ["java", "-jar", "rinha.jar"]
+ADD /build/libs/starter-1.0.0-SNAPSHOT-fat.jar rinha-fat.jar
+ENTRYPOINT ["java", "-jar", "rinha-fat.jar", "run", "com.example.starter.MainVerticle"]

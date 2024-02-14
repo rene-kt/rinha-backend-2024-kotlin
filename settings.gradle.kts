@@ -1,1 +1,1 @@
-rootProject.name = "rinhadebackend"
+rootProject.name = "starter"
