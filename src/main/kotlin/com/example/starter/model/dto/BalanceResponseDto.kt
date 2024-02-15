@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonProperty
 
 class BalanceResponseDto(
   @JsonProperty("saldo")
-    val balance: BalanceDto,
+    val saldo: BalanceDto,
   @JsonProperty("ultimas_transacoes")
-    val transactions: List<TransactionItemDto>
+    val ultimas_transacoes: List<TransactionItemDto>
 )

@@ -7,136 +7,128 @@ import io.vertx.core.Future
 import io.vertx.sqlclient.SqlConnection
 import io.vertx.sqlclient.Tuple
 import java.time.LocalDateTime
+import kotlin.math.abs
 
 
 class ClientService {
 
-  private val dbClient = PostgresFactory.pgPool
+    private val dbClient = PostgresFactory.pgPool
 
-  fun createTransaction(id: Int, transactionDto: TransactionDto): ResponseObject {
-    val client = getClient(id) ?: return ResponseObject(404, "Cliente não encontrado")
+    fun createTransaction(id: Int, transactionDto: TransactionDto): ResponseObject {
+        if (
+            transactionDto.descricao == null ||
+            transactionDto.descricao.length > 10 ||
+            transactionDto.descricao.isEmpty() ||
+            transactionDto.tipo.isEmpty() ||
+            transactionDto.tipo !in listOf("d", "c") ||
+            transactionDto.valor <= 0
+        ) return ResponseObject(
+            422,
+            "Requisição inválida"
+        )
 
-    if (transactionDto.description.length > 10) return ResponseObject(422, "Descrição muito longa")
+        return dbClient.withTransaction { transaction ->
+            getClient(transaction, id)
+                .compose { client ->
+                    if (client == null)
+                        return@compose Future.succeededFuture(ResponseObject(404, "Cliente não encontrado"))
 
-    if (transactionDto.type == TypeEnum.d) {
-      val newValue = client.saldo - transactionDto.value
-      if ((newValue * -1) > client.limit) return ResponseObject(422, "Limite excedido")
 
-      updateClient(newValue, id)
-      handleTransaction(transactionDto, id)
+                    if (transactionDto.tipo == "d") {
+                        val newValue = client.saldo - transactionDto.valor
+                        if (abs(newValue) > client.limit)
+                            return@compose Future.succeededFuture(ResponseObject(422, "Limite excedido"))
 
-      return ResponseObject(200, TransactionResponseDto(client.limit, newValue))
+
+                        return@compose updateClient(transaction, newValue, id)
+                            .flatMap { insertTransaction(transaction, transactionDto, id) }
+                            .map { ResponseObject(200, TransactionResponseDto(client.limit, newValue)) }
+                    }
+
+
+                    return@compose insertTransaction(transaction, transactionDto, id)
+                        .map { ResponseObject(200, TransactionResponseDto(client.limit, client.saldo)) }
+
+                }
+        }.toCompletionStage()
+            .toCompletableFuture()
+            .get()
     }
 
-    handleTransaction(transactionDto, id)
-    return ResponseObject(200, TransactionResponseDto(client.limit, client.saldo))
-  }
+    fun getStatement(id: Int): ResponseObject {
+        return dbClient.withTransaction { transaction ->
+            getClient(transaction, id).compose { client ->
+                if (client == null) {
+                    return@compose Future.succeededFuture(ResponseObject(404, "Cliente não encontrado"))
+                }
 
-  fun getStatement(id: Int): ResponseObject {
+                return@compose getLast10Transactions(transaction, id)
+                    .map { transactions ->
+                        val balanceDto = BalanceDto(client.saldo, LocalDateTime.now().toString(), client.limit)
+                        val balanceResponseDto = BalanceResponseDto(balanceDto, transactions)
+                        ResponseObject(200, balanceResponseDto)
+                    }
+            }
+        }.toCompletionStage().toCompletableFuture().get()
+    }
 
-    val client = getClient(id) ?: return ResponseObject(404, "Cliente não encontrado")
-    val transactions = getLast10Transactions(id)
-
-    return ResponseObject(
-      200,
-      BalanceResponseDto(
-        balance = BalanceDto(client.saldo, LocalDateTime.now().toString(), client.limit),
-        transactions = transactions
-      )
-    )
-  }
-
-
-  private fun getLast10Transactions(id: Int): List<TransactionItemDto> {
-    val transactions = mutableListOf<TransactionItemDto>()
-
-    dbClient.query(
-      "select valor, tipo, descricao, data_criacao from transacoes where client_id = $id " +
-        "ORDER BY data_criacao DESC limit 10"
-    )
-      .execute()
-      .onSuccess { rowSet ->
-
-        transactions.addAll(rowSet.map {
-          TransactionItemDto(
-            it.get(Int::class.java, "valor"),
-            it.get(Char::class.java, "tipo"),
-            it.get(String::class.java, "descricao"),
-            it.get(LocalDateTime::class.java, "data_criacao").toString()
-          )
-        })
-      }
-
-    return transactions
-  }
+    private fun getLast10Transactions(transaction: SqlConnection, id: Int): Future<List<TransactionItemDto>> {
+        val query = "SELECT * FROM transacoes WHERE cliente_id = $1 ORDER BY data_criacao DESC LIMIT 10"
+        val tuples = Tuple.of(id)
+        return transaction.preparedQuery(query)
+            .execute(tuples).map { result ->
+                result.map { row ->
+                    TransactionItemDto(
+                        row.getInteger("valor"),
+                        row.getString("tipo")[0],
+                        row.getString("descricao"),
+                        row.getLocalDateTime("data_criacao").toString()
+                    )
+                }
+            }
+    }
 
 
-  private fun getClient(id: Int): Client? {
-    var client: Client? = null
-    dbClient.query("select id, limite, saldo from clientes where id = $id").execute()
-      .onSuccess { result ->
-        println("entrou aq")
-        println(result)
-        if (result.size() > 0)
-          client = result.map {
-            Client(
-              it.get(Int::class.java, "id"),
-              it.get(Int::class.java, "limite"),
-              it.get(Int::class.java, "saldo")
-            )
-          }.first()
-      }.onFailure {
-        println(it)
-        println(it.message)
-        println(it.cause)
-      }
+    private fun getClient(transaction: SqlConnection, id: Int): Future<Client?> {
+        val query = "SELECT * FROM clientes WHERE id = $1"
+        val params = Tuple.of(id)
+        return transaction.preparedQuery(query).execute(params)
+            .map { result ->
+                val iterator = result.iterator()
+                if (iterator.hasNext()) {
+                    val row = iterator.next()
+                    Client(
+                        id = id,
+                        limit = row.getInteger("limite"),
+                        saldo = row.getInteger("saldo")
+                    )
+                } else null
+            }
+    }
 
-    return client
-  }
+    private fun insertTransaction(
+        transaction: SqlConnection,
+        transactionData: TransactionDto,
+        id: Int
+    ): Future<Boolean> {
+        return Future.future { future ->
+            val insertQuery =
+                "INSERT INTO transacoes (valor, tipo, descricao, data_criacao, cliente_id) VALUES ($1, $2, $3, now(), $4)"
+            val params = Tuple.of(transactionData.valor, transactionData.tipo, transactionData.descricao, id)
 
-  private fun handleTransaction(transactionDto: TransactionDto, clientId: Int) {
-    dbClient.withTransaction { transaction ->
-      insertTransaction(transaction, transactionDto, clientId)
-        .onSuccess { success ->
-          if (success) {
-            transaction.transaction().commit()
-            transaction.close()
-          } else {
-            transaction.transaction().rollback()
-          }
+            transaction.preparedQuery(insertQuery).execute(params).onComplete { ar ->
+                future.complete(ar.succeeded())
+            }
         }
-        .onFailure {
-          transaction.transaction().rollback()
-          transaction.close()
+    }
+
+    private fun updateClient(transaction: SqlConnection, saldo: Int, clientId: Int): Future<Boolean> {
+        return Future.future { future ->
+            val query = "UPDATE clientes SET saldo = $1 WHERE id = $2"
+            val params = Tuple.of(saldo, clientId)
+            transaction.preparedQuery(query).execute(params).onComplete {
+                future.complete(it.succeeded())
+            }
         }
     }
-  }
-
-  private fun insertTransaction(transaction: SqlConnection, transactionData: TransactionDto, id: Int): Future<Boolean> {
-    val future = Future.future { future ->
-      val insertQuery =
-        "INSERT INTO transacoes (valor, tipo, descricao, data_criacao, client_id) VALUES ($1, $2, $3, now(), $4)"
-      val params = Tuple.of(transactionData.value, transactionData.type, transactionData.description, id)
-
-      transaction.preparedQuery(insertQuery).execute(params).onComplete { ar ->
-        if (ar.succeeded()) {
-          future.complete(true)
-        } else {
-          future.fail(ar.cause())
-        }
-      }
-    }
-
-    return future
-  }
-
-  private fun updateClient(saldo: Int, clientId: Int): Future<Boolean> {
-    val future = Future.future { future ->
-      dbClient.query("UPDATE clientes SET saldo = $saldo WHERE id = $clientId").execute()
-        .onSuccess { future.complete(true) }
-        .onFailure { future.fail(it) }
-    }
-
-    return future
-  }
 }

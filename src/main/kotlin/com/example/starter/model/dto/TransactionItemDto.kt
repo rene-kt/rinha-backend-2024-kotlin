@@ -4,11 +4,11 @@ import com.fasterxml.jackson.annotation.JsonProperty
 
 data class TransactionItemDto(
     @JsonProperty("valor")
-    val value: Int,
+    val valor: Int,
     @JsonProperty("tipo")
-    val type: Char,
+    val tipo: Char,
     @JsonProperty("descricao")
-    val description: String,
+    val descricao: String,
     @JsonProperty("realizada_em")
-    val performedAt: String
+    val realizada_em: String
 )

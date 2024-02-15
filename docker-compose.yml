@@ -11,32 +11,47 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.6'
-          memory: '200MB'
+          cpus: '0.4'
+          memory: '180MB'
     networks:
       - app-network
-#  api-2:
-#    build:
-#      context: .
-#      dockerfile: Dockerfile
-#    hostname: api-2
-#    networks:
-#      - app-network
-#  nginx:
-#    image: nginx:latest
-#    volumes:
-#      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-#    depends_on:
-#      - api-1
-#      - api-2
-#    ports:
-#      - "9999:9999"
-#    networks:
-#      - app-network
+  api-2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    hostname: api-2
+    deploy:
+      resources:
+        limits:
+          cpus: '0.4'
+          memory: '150MB'
+    networks:
+      - app-network
+  nginx:
+    image: nginx:latest
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api-1
+      - api-2
+    ports:
+      - "9999:9999"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.1'
+          memory: '20MB'
+    networks:
+      - app-network
   postgres-db:
     image: postgres:latest
     container_name: rinha-backend-db
     user: postgres
+    deploy:
+      resources:
+        limits:
+          cpus: '0.6'
+          memory: '200MB'
     environment:
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_USER=postgres
@@ -45,6 +60,7 @@ services:
       - "5433:5433"
     volumes:
       - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./my-postgres.conf:/etc/postgresql/postgresql.conf
     networks:
       - app-network
 networks:

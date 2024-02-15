@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonProperty
 
 data class TransactionResponseDto(
     @JsonProperty("limite")
-    val limit: Int,
+    val limite: Int,
     @JsonProperty("saldo")
-    val balance: Int
+    val saldo: Int
 )
